@@ -1,0 +1,6 @@
+# Direct deployment pins for the case-study Streamlit package.
+# Rebuild with pip-tools or uv before a governed Posit Connect deployment.
+streamlit==1.36.0
+pandas==2.2.3
+altair==5.5.0
+numpy==1.26.4

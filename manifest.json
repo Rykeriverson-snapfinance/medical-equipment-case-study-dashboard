@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "locale": "en_US.UTF-8",
+  "metadata": {
+    "appmode": "python-streamlit",
+    "entrypoint": "app.py",
+    "name": "Medical Equipment Program Case Study"
+  },
+  "python": {
+    "version": "3.10",
+    "package_manager": {
+      "name": "pip",
+      "package_file": "requirements.txt"
+    }
+  },
+  "files": {
+    "app.py": {},
+    "data.py": {},
+    "dashboard_contract.yaml": {},
+    "requirements.txt": {},
+    "requirements-lock.txt": {},
+    "README.md": {},
+    "DEPLOYMENT.md": {},
+    ".env.example": {},
+    ".streamlit/config.toml": {},
+    "queries/case_study_reference.sql": {},
+    "data/case_study_dataset.csv": {}
+  }
+}
