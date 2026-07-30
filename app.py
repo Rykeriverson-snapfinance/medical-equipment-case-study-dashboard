@@ -495,6 +495,119 @@ def repayment_region_chart(region: pd.DataFrame) -> alt.Chart:
     )
 
 
+def repayment_profit_grade_chart(repayment_grade: pd.DataFrame) -> alt.LayerChart:
+    bars = (
+        alt.Chart(repayment_grade)
+        .mark_bar(color=SNAP_GREEN_DARK)
+        .encode(
+            x=alt.X("prequalification_risk_grade:N", title="Prequalification Risk Grade"),
+            y=alt.Y("profit_proxy:Q", title="Profit proxy"),
+            tooltip=[
+                alt.Tooltip("prequalification_risk_grade:N", title="Grade"),
+                alt.Tooltip("accounts:Q", title="Accounts", format=",.0f"),
+                alt.Tooltip("profit_proxy:Q", title="Profit proxy", format="$,.0f"),
+                alt.Tooltip("profit_proxy_per_account:Q", title="Profit per account", format="$,.0f"),
+            ],
+        )
+    )
+    line = (
+        alt.Chart(repayment_grade)
+        .mark_line(point=True, color=SNAP_ORANGE, strokeWidth=3)
+        .encode(
+            x=alt.X("prequalification_risk_grade:N"),
+            y=alt.Y("charge_off_rate:Q", title="Charge-off rate", axis=alt.Axis(format="%")),
+            tooltip=[
+                alt.Tooltip("prequalification_risk_grade:N", title="Grade"),
+                alt.Tooltip("charge_off_rate:Q", title="Charge-off rate", format=".1%"),
+            ],
+        )
+    )
+    return (
+        alt.layer(bars, line)
+        .resolve_scale(y="independent")
+        .properties(title="Profit Proxy And Charge-Off Rate By Risk Grade", height=360)
+    )
+
+
+def risk_floor_chart(grade: pd.DataFrame) -> alt.LayerChart:
+    view = grade.copy()
+    view["$1,500 Floor Share"] = view["floor_share"]
+    bars = (
+        alt.Chart(view)
+        .mark_bar(color=SNAP_BLUE_LIGHT)
+        .encode(
+            x=alt.X("prequalification_risk_grade:N", title="Prequalification Risk Grade"),
+            y=alt.Y("applications:Q", title="Applications"),
+            tooltip=[
+                alt.Tooltip("prequalification_risk_grade:N", title="Grade"),
+                alt.Tooltip("applications:Q", title="Applications", format=",.0f"),
+                alt.Tooltip("floor_share:Q", title="$1,500 floor share", format=".1%"),
+                alt.Tooltip("end_to_end_completion_rate:Q", title="Completion rate", format=".1%"),
+            ],
+        )
+    )
+    line = (
+        alt.Chart(view)
+        .mark_line(point=True, color=SNAP_ORANGE, strokeWidth=3)
+        .encode(
+            x=alt.X("prequalification_risk_grade:N"),
+            y=alt.Y("$1,500 Floor Share:Q", title="$1,500 floor share", axis=alt.Axis(format="%")),
+            tooltip=[
+                alt.Tooltip("prequalification_risk_grade:N", title="Grade"),
+                alt.Tooltip("$1,500 Floor Share:Q", title="$1,500 floor share", format=".1%"),
+            ],
+        )
+    )
+    return (
+        alt.layer(bars, line)
+        .resolve_scale(y="independent")
+        .properties(title="Application Volume And Floor Usage By Risk Grade", height=360)
+    )
+
+
+def risk_outcome_grade_chart(risk_repayment: pd.DataFrame) -> alt.Chart:
+    long = risk_repayment.melt(
+        id_vars=["prequalification_risk_grade"],
+        value_vars=[
+            "end_to_end_completion_rate",
+            "missed_payment_day_45_rate",
+            "charge_off_rate",
+        ],
+        var_name="metric",
+        value_name="rate",
+    )
+    long["metric"] = long["metric"].map(
+        {
+            "end_to_end_completion_rate": "Completion",
+            "missed_payment_day_45_rate": "Missed pay day 45",
+            "charge_off_rate": "Charge-off",
+        }
+    )
+    return (
+        alt.Chart(long)
+        .mark_bar()
+        .encode(
+            x=alt.X("prequalification_risk_grade:N", title="Prequalification Risk Grade"),
+            xOffset="metric:N",
+            y=alt.Y("rate:Q", title="Rate", axis=alt.Axis(format="%")),
+            color=alt.Color(
+                "metric:N",
+                title="Metric",
+                scale=alt.Scale(
+                    domain=["Completion", "Missed pay day 45", "Charge-off"],
+                    range=[SNAP_GREEN_DARK, SNAP_ORANGE, SNAP_BLUE_MED],
+                ),
+            ),
+            tooltip=[
+                alt.Tooltip("prequalification_risk_grade:N", title="Grade"),
+                alt.Tooltip("metric:N", title="Metric"),
+                alt.Tooltip("rate:Q", title="Rate", format=".1%"),
+            ],
+        )
+        .properties(title="Completion And Repayment Stress By Risk Grade", height=360)
+    )
+
+
 def render_metric_row(summary: dict[str, float]) -> None:
     cols = st.columns(5)
     cols[0].metric("Prequal applications", fmt_int(summary["applications"]))
@@ -612,6 +725,225 @@ def render_major_findings(
     )
 
 
+def render_repayment_profitability_answer(
+    repayment_metrics: dict[str, float],
+    repayment_grade: pd.DataFrame,
+    repayment_swap: pd.DataFrame,
+    repayment_region: pd.DataFrame,
+    repayment_status: pd.DataFrame,
+) -> None:
+    paid_active_share = repayment_status[
+        repayment_status["account_status"].isin(["ACTIVE", "PAID"])
+    ]["share"].sum()
+    grade_e = repayment_grade[repayment_grade["prequalification_risk_grade"].eq("E")]
+    grade_f = repayment_grade[repayment_grade["prequalification_risk_grade"].eq("F")]
+    swap_in = repayment_swap[repayment_swap["segment"].eq("Swap-in")]
+    non_swap = repayment_swap[repayment_swap["segment"].eq("Non-swap")]
+
+    grade_e_payback = grade_e["projected_payback_multiple"].iloc[0] if not grade_e.empty else pd.NA
+    grade_e_profit = grade_e["profit_proxy_per_account"].iloc[0] if not grade_e.empty else pd.NA
+    grade_f_chargeoff = grade_f["charge_off_rate"].iloc[0] if not grade_f.empty else pd.NA
+    swap_missed = swap_in["missed_payment_day_45_rate"].iloc[0] if not swap_in.empty else pd.NA
+    non_swap_missed = non_swap["missed_payment_day_45_rate"].iloc[0] if not non_swap.empty else pd.NA
+    swap_chargeoff = swap_in["charge_off_rate"].iloc[0] if not swap_in.empty else pd.NA
+    non_swap_chargeoff = non_swap["charge_off_rate"].iloc[0] if not non_swap.empty else pd.NA
+
+    st.subheader("Repayment Metrics And Profitability")
+    st.markdown(
+        f"""
+        <div class="snap-callout">
+          <strong>Simple answer:</strong> repayment is directionally positive, but it is not a blank-check
+          expansion story. The matched accounts show {fmt_money(repayment_metrics["total_net_funded"])}
+          net funded, {fmt_money(repayment_metrics["total_projected_paid"])} projected paid, and a
+          {fmt_multiple(repayment_metrics["projected_payback_multiple"])} payback multiple. That creates a
+          {fmt_money(repayment_metrics["profit_proxy"])} profit proxy before fully loaded costs.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="snap-card">
+          <strong>What the repayment data says</strong>
+          <ul>
+            <li>{fmt_pct(paid_active_share)} of matched accounts are currently active or paid, while charge-offs are {fmt_pct(repayment_metrics["charge_off_rate"])}.</li>
+            <li>Swap-in accounts have a similar payback multiple, but more early stress: missed payment at day 45 is {fmt_pct(swap_missed)} vs. {fmt_pct(non_swap_missed)} for non-swap, and charge-off is {fmt_pct(swap_chargeoff)} vs. {fmt_pct(non_swap_chargeoff)}.</li>
+            <li>Grade E is the weakest profitability pocket, with only {fmt_multiple(grade_e_payback)} payback and {fmt_money(grade_e_profit)} profit proxy per account.</li>
+            <li>Grade F contributes meaningful total projected profit because it has volume, but it also has the highest charge-off pressure at {fmt_pct(grade_f_chargeoff)}.</li>
+          </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.altair_chart(repayment_profit_grade_chart(repayment_grade), use_container_width=True)
+    with c2:
+        st.altair_chart(repayment_outcome_chart(repayment_swap), use_container_width=True)
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.altair_chart(repayment_region_chart(repayment_region), use_container_width=True)
+    with c2:
+        st.altair_chart(account_status_chart(repayment_status), use_container_width=True)
+
+    grade_profit_table = repayment_grade[
+        [
+            "prequalification_risk_grade",
+            "accounts",
+            "total_net_funded",
+            "projected_payback_multiple",
+            "profit_proxy",
+            "profit_proxy_per_account",
+            "missed_payment_day_45_rate",
+            "charge_off_rate",
+        ]
+    ].rename(
+        columns={
+            "prequalification_risk_grade": "Prequal Grade",
+            "accounts": "Accounts",
+            "total_net_funded": "Net Funded",
+            "projected_payback_multiple": "Payback Multiple",
+            "profit_proxy": "Profit Proxy",
+            "profit_proxy_per_account": "Profit Proxy Per Account",
+            "missed_payment_day_45_rate": "Missed Payment Day 45",
+            "charge_off_rate": "Charge-Off Rate",
+        }
+    )
+    st.dataframe(
+        format_table(
+            grade_profit_table,
+            money_cols=["Net Funded", "Profit Proxy", "Profit Proxy Per Account"],
+            multiple_cols=["Payback Multiple"],
+            pct_cols=["Missed Payment Day 45", "Charge-Off Rate"],
+            int_cols=["Accounts"],
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
+def render_risk_profile_answer(
+    grade: pd.DataFrame,
+    repayment_grade: pd.DataFrame,
+    migration: pd.DataFrame,
+    swap: pd.DataFrame,
+    repayment_swap: pd.DataFrame,
+) -> None:
+    risk_repayment = grade.merge(
+        repayment_grade[
+            [
+                "prequalification_risk_grade",
+                "accounts",
+                "missed_payment_day_45_rate",
+                "charge_off_rate",
+                "projected_payback_multiple",
+                "profit_proxy_per_account",
+            ]
+        ],
+        on="prequalification_risk_grade",
+        how="left",
+    )
+    grade_f = risk_repayment[risk_repayment["prequalification_risk_grade"].eq("F")]
+    improved = migration[migration["risk_grade_migration"].eq("Improved")]
+    same = migration[migration["risk_grade_migration"].eq("Same")]
+    worsened = migration[migration["risk_grade_migration"].eq("Worsened")]
+    swap_in = swap[swap["segment"].eq("Swap-in")]
+    repayment_swap_in = repayment_swap[repayment_swap["segment"].eq("Swap-in")]
+
+    grade_f_applications = grade_f["applications"].iloc[0] if not grade_f.empty else pd.NA
+    grade_f_completion = grade_f["end_to_end_completion_rate"].iloc[0] if not grade_f.empty else pd.NA
+    grade_f_floor = grade_f["floor_share"].iloc[0] if not grade_f.empty else pd.NA
+    grade_f_chargeoff = grade_f["charge_off_rate"].iloc[0] if not grade_f.empty else pd.NA
+    improved_share = improved["share"].iloc[0] if not improved.empty else pd.NA
+    same_share = same["share"].iloc[0] if not same.empty else pd.NA
+    worsened_share = worsened["share"].iloc[0] if not worsened.empty else pd.NA
+    swap_floor = swap_in["floor_share"].iloc[0] if not swap_in.empty else pd.NA
+    swap_chargeoff = repayment_swap_in["charge_off_rate"].iloc[0] if not repayment_swap_in.empty else pd.NA
+
+    st.subheader("Risk Profile Of Applicants")
+    st.markdown(
+        f"""
+        <div class="snap-callout">
+          <strong>Simple answer:</strong> the program is not uniformly risky, but risk is concentrated.
+          Grade F is the main pressure point: {fmt_int(grade_f_applications)} applications, {fmt_pct(grade_f_floor)}
+          using the $1,500 floor, {fmt_pct(grade_f_completion)} end-to-end completion, and
+          {fmt_pct(grade_f_chargeoff)} charge-off among matched repayment accounts.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="snap-card">
+          <strong>What changed after full application?</strong>
+          <ul>
+            <li>For applicants who reached full application, risk usually looked better: {fmt_pct(improved_share)} improved and {fmt_pct(same_share)} stayed the same.</li>
+            <li>Only {fmt_pct(worsened_share)} worsened, so collecting fuller applicant data does appear to sharpen the risk read.</li>
+            <li>The special underwriting risk is mostly about concentration: swap-in has {fmt_pct(swap_floor)} floor usage and {fmt_pct(swap_chargeoff)} charge-off, so it should be monitored as a targeted exception rather than treated as standard policy.</li>
+          </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.altair_chart(risk_floor_chart(grade), use_container_width=True)
+    with c2:
+        st.altair_chart(risk_outcome_grade_chart(risk_repayment), use_container_width=True)
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.altair_chart(risk_migration_chart(migration), use_container_width=True)
+    with c2:
+        st.altair_chart(swap_chart(swap), use_container_width=True)
+
+    risk_table = risk_repayment[
+        [
+            "prequalification_risk_grade",
+            "applications",
+            "prequal_approval_rate",
+            "end_to_end_completion_rate",
+            "floor_share",
+            "avg_underwriting_lift",
+            "missed_payment_day_45_rate",
+            "charge_off_rate",
+            "projected_payback_multiple",
+        ]
+    ].rename(
+        columns={
+            "prequalification_risk_grade": "Prequal Grade",
+            "applications": "Applications",
+            "prequal_approval_rate": "Prequal Approval Rate",
+            "end_to_end_completion_rate": "Completion Rate",
+            "floor_share": "$1,500 Floor Share",
+            "avg_underwriting_lift": "Avg Underwriting Lift",
+            "missed_payment_day_45_rate": "Missed Payment Day 45",
+            "charge_off_rate": "Charge-Off Rate",
+            "projected_payback_multiple": "Payback Multiple",
+        }
+    )
+    st.dataframe(
+        format_table(
+            risk_table,
+            money_cols=["Avg Underwriting Lift"],
+            multiple_cols=["Payback Multiple"],
+            pct_cols=[
+                "Prequal Approval Rate",
+                "Completion Rate",
+                "$1,500 Floor Share",
+                "Missed Payment Day 45",
+                "Charge-Off Rate",
+            ],
+            int_cols=["Applications"],
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
 def render_source_banner(data: pd.DataFrame) -> None:
     metadata = source_metadata(data)
     st.caption(
@@ -711,8 +1043,8 @@ tabs = st.tabs(
         "Executive Answer",
         "Funnel",
         "Special Underwriting",
-        "Risk Profile",
-        "Repayment",
+        "Risk Deep Dive",
+        "Repayment & Profitability",
         "Recommendation Detail",
         "Remaining Caveats",
         "Appendix",
@@ -831,202 +1163,23 @@ with tabs[2]:
     )
 
 with tabs[3]:
-    st.subheader("Applicant Risk Profile")
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        st.altair_chart(risk_migration_chart(migration), use_container_width=True)
-    with c2:
-        st.altair_chart(grade_chart(grade), use_container_width=True)
-
-    grade_table = grade[
-        [
-            "prequalification_risk_grade",
-            "applications",
-            "prequal_approval_rate",
-            "continuation_rate",
-            "final_approval_rate",
-            "end_to_end_completion_rate",
-            "swap_in_share",
-            "floor_share",
-            "avg_prequal_risk_score",
-            "avg_underwriting_lift",
-            "estimated_funded_amount",
-        ]
-    ].rename(
-        columns={
-            "prequalification_risk_grade": "Prequal Grade",
-            "applications": "Applications",
-            "prequal_approval_rate": "Prequal Approval Rate",
-            "continuation_rate": "Continuation Rate",
-            "final_approval_rate": "Final Approval Rate",
-            "end_to_end_completion_rate": "End-To-End Completion",
-            "swap_in_share": "Swap-In Share",
-            "floor_share": "$1,500 Floor Share",
-            "avg_prequal_risk_score": "Avg Prequal Risk Score",
-            "avg_underwriting_lift": "Avg Underwriting Lift",
-            "estimated_funded_amount": "Estimated Funded Amount",
-        }
-    )
-    st.dataframe(
-        format_table(
-            grade_table,
-            money_cols=["Avg Underwriting Lift", "Estimated Funded Amount"],
-            pct_cols=[
-                "Prequal Approval Rate",
-                "Continuation Rate",
-                "Final Approval Rate",
-                "End-To-End Completion",
-                "Swap-In Share",
-                "$1,500 Floor Share",
-            ],
-            int_cols=["Applications"],
-        ),
-        hide_index=True,
-        use_container_width=True,
-    )
+    if repayment_filtered.empty:
+        st.subheader("Risk Profile Of Applicants")
+        st.info("No repayment records match the selected filters, so the risk profile cannot be tied to repayment outcomes yet.")
+    else:
+        render_risk_profile_answer(grade, repayment_grade, migration, swap, repayment_swap)
 
 with tabs[4]:
-    st.subheader("Repayment Performance")
-    st.markdown(
-        "Repayment records are joined to filtered completed applications by application number. The repayment metrics should be read as account-performance indicators, not fully loaded program profitability."
-    )
-
     if repayment_filtered.empty:
+        st.subheader("Repayment Metrics And Profitability")
         st.info("No repayment records match the selected filters.")
     else:
-        render_repayment_metric_row(repayment_metrics)
-
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            st.altair_chart(repayment_outcome_chart(repayment_swap), use_container_width=True)
-        with c2:
-            st.altair_chart(repayment_payback_grade_chart(repayment_grade), use_container_width=True)
-
-        st.altair_chart(account_status_chart(repayment_status), use_container_width=True)
-
-        st.altair_chart(repayment_region_chart(repayment_region), use_container_width=True)
-
-        swap_repayment_table = repayment_swap[
-            [
-                "segment",
-                "accounts",
-                "total_net_funded",
-                "avg_ticket_size",
-                "projected_payback_multiple",
-                "profit_proxy",
-                "profit_proxy_per_account",
-                "missed_payment_day_45_rate",
-                "no_payments_first_day_60_rate",
-                "past_due_30_plus_day_120_rate",
-                "early_payoff_day_120_rate",
-                "charge_off_rate",
-            ]
-        ].rename(
-            columns={
-                "segment": "Segment",
-                "accounts": "Accounts",
-                "total_net_funded": "Net Funded",
-                "avg_ticket_size": "Avg Ticket Size",
-                "projected_payback_multiple": "Projected Payback Multiple",
-                "profit_proxy": "Profit Proxy",
-                "profit_proxy_per_account": "Profit Proxy Per Account",
-                "missed_payment_day_45_rate": "Missed Payment Day 45",
-                "no_payments_first_day_60_rate": "No Payments Day 60",
-                "past_due_30_plus_day_120_rate": "30+ Past Due Day 120",
-                "early_payoff_day_120_rate": "Early Payoff Day 120",
-                "charge_off_rate": "Charge-Off Rate",
-            }
-        )
-        st.dataframe(
-            format_table(
-                swap_repayment_table,
-                money_cols=["Net Funded", "Avg Ticket Size", "Profit Proxy", "Profit Proxy Per Account"],
-                multiple_cols=["Projected Payback Multiple"],
-                pct_cols=[
-                    "Missed Payment Day 45",
-                    "No Payments Day 60",
-                    "30+ Past Due Day 120",
-                    "Early Payoff Day 120",
-                    "Charge-Off Rate",
-                ],
-                int_cols=["Accounts"],
-            ),
-            hide_index=True,
-            use_container_width=True,
-        )
-
-        grade_repayment_table = repayment_grade[
-            [
-                "prequalification_risk_grade",
-                "accounts",
-                "total_net_funded",
-                "avg_ticket_size",
-                "projected_payback_multiple",
-                "profit_proxy_per_account",
-                "missed_payment_day_45_rate",
-                "past_due_30_plus_day_120_rate",
-                "charge_off_rate",
-            ]
-        ].rename(
-            columns={
-                "prequalification_risk_grade": "Prequal Grade",
-                "accounts": "Accounts",
-                "total_net_funded": "Net Funded",
-                "avg_ticket_size": "Avg Ticket Size",
-                "projected_payback_multiple": "Projected Payback Multiple",
-                "profit_proxy_per_account": "Profit Proxy Per Account",
-                "missed_payment_day_45_rate": "Missed Payment Day 45",
-                "past_due_30_plus_day_120_rate": "30+ Past Due Day 120",
-                "charge_off_rate": "Charge-Off Rate",
-            }
-        )
-        st.dataframe(
-            format_table(
-                grade_repayment_table,
-                money_cols=["Net Funded", "Avg Ticket Size", "Profit Proxy Per Account"],
-                multiple_cols=["Projected Payback Multiple"],
-                pct_cols=["Missed Payment Day 45", "30+ Past Due Day 120", "Charge-Off Rate"],
-                int_cols=["Accounts"],
-            ),
-            hide_index=True,
-            use_container_width=True,
-        )
-
-        region_repayment_table = repayment_region[
-            [
-                "region",
-                "accounts",
-                "total_net_funded",
-                "projected_payback_multiple",
-                "profit_proxy",
-                "profit_proxy_per_account",
-                "missed_payment_day_45_rate",
-                "past_due_30_plus_day_120_rate",
-                "charge_off_rate",
-            ]
-        ].rename(
-            columns={
-                "region": "Region",
-                "accounts": "Accounts",
-                "total_net_funded": "Net Funded",
-                "projected_payback_multiple": "Projected Payback Multiple",
-                "profit_proxy": "Profit Proxy",
-                "profit_proxy_per_account": "Profit Proxy Per Account",
-                "missed_payment_day_45_rate": "Missed Payment Day 45",
-                "past_due_30_plus_day_120_rate": "30+ Past Due Day 120",
-                "charge_off_rate": "Charge-Off Rate",
-            }
-        )
-        st.dataframe(
-            format_table(
-                region_repayment_table,
-                money_cols=["Net Funded", "Profit Proxy", "Profit Proxy Per Account"],
-                multiple_cols=["Projected Payback Multiple"],
-                pct_cols=["Missed Payment Day 45", "30+ Past Due Day 120", "Charge-Off Rate"],
-                int_cols=["Accounts"],
-            ),
-            hide_index=True,
-            use_container_width=True,
+        render_repayment_profitability_answer(
+            repayment_metrics,
+            repayment_grade,
+            repayment_swap,
+            repayment_region,
+            repayment_status,
         )
 
         st.download_button(
