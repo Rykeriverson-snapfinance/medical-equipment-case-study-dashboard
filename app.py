@@ -622,6 +622,20 @@ def render_metric_row(summary: dict[str, float]) -> None:
     cols[4].metric("Avg prequal risk score", f"{summary['avg_prequal_risk_score']:.3f}")
 
 
+def render_funnel_overview_kpis(summary: dict[str, float]) -> None:
+    avg_completed_ticket = (
+        summary["estimated_funded_amount"] / summary["completed_applications"]
+        if summary["completed_applications"]
+        else pd.NA
+    )
+
+    cols = st.columns(4)
+    cols[0].metric("Volume", fmt_int(summary["applications"]))
+    cols[1].metric("Approval rate", fmt_pct(summary["prequal_approval_rate"]))
+    cols[2].metric("Completion rate", fmt_pct(summary["end_to_end_completion_rate"]))
+    cols[3].metric("Ticket size", fmt_money(avg_completed_ticket))
+
+
 def render_repayment_metric_row(summary: dict[str, float]) -> None:
     cols = st.columns(5)
     cols[0].metric("Repayment accounts", fmt_int(summary["repayment_accounts"]))
@@ -1192,6 +1206,7 @@ with tabs[1]:
     st.markdown(
         "The funnel is strongest after a customer submits the full application. The bigger opportunity is earlier: getting more prequalified customers to keep going."
     )
+    render_funnel_overview_kpis(summary)
     col1, col2 = st.columns([1, 1])
     with col1:
         st.altair_chart(funnel_chart(summary), use_container_width=True)
