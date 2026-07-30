@@ -12,9 +12,7 @@ from data import (
     joined_repayment_data,
     load_application_data,
     load_repayment_data,
-    merchant_segments,
     monthly_funnel,
-    recommendation_segments,
     repayment_by_grade,
     repayment_by_region,
     repayment_by_swap,
@@ -640,14 +638,34 @@ def render_repayment_metric_row(summary: dict[str, float]) -> None:
     cols[4].metric("Charge-off rate", fmt_pct(summary["charge_off_rate"]))
 
 
+def render_executive_kpis(
+    summary: dict[str, float],
+    repayment_metrics: dict[str, float] | None = None,
+) -> None:
+    cols = st.columns(3)
+    cols[0].metric("Applications", fmt_int(summary["applications"]))
+    cols[1].metric("Continuation rate", fmt_pct(summary["continuation_rate"]))
+    cols[2].metric("Completed applications", fmt_int(summary["completed_applications"]))
+
+    cols = st.columns(3)
+    if repayment_metrics:
+        cols[0].metric("Payback multiple", fmt_multiple(repayment_metrics["projected_payback_multiple"]))
+        cols[1].metric("Profit proxy", fmt_money(repayment_metrics["profit_proxy"]))
+        cols[2].metric("Charge-off rate", fmt_pct(repayment_metrics["charge_off_rate"]))
+    else:
+        cols[0].metric("Estimated funded amount", fmt_money(summary["estimated_funded_amount"]))
+        cols[1].metric("Final approval rate", fmt_pct(summary["final_approval_rate"]))
+        cols[2].metric("Avg prequal risk score", f"{summary['avg_prequal_risk_score']:.3f}")
+
+
 def render_answer_cards() -> None:
     st.markdown(
         """
         <div class="snap-callout">
-          <strong>Management answer:</strong> Continue the program selectively. The funnel shows real demand
-          and strong final approval once customers complete the full application, and the repayment extract
-          shows projected paid amount above net funded amount. The expansion guardrails remain swap-in,
-          F-grade concentration, and account performance signals such as missed payments and charge-offs.
+          <strong>Management answer:</strong> Keep the program, but keep it controlled. I would not shut it down,
+          because the repayment read is positive and customers who finish the full application are usually approved.
+          I also would not open it up everywhere yet, because the risk is concentrated in a few places that need
+          tighter guardrails.
         </div>
         """,
         unsafe_allow_html=True,
@@ -657,12 +675,12 @@ def render_answer_cards() -> None:
         st.markdown(
             """
             <div class="snap-card">
-              <strong>What looks positive</strong>
+              <strong>Why it is worth keeping</strong>
               <ul>
-                <li>Demand exists across regions and merchants.</li>
-                <li>Prequal approval is high and final approval is very strong after full application.</li>
-                <li>Most applicants with full-app data show improved or unchanged risk grade.</li>
-                <li>Repayment records cover most completed applications and project positive payback.</li>
+                <li>There is real application volume across the program.</li>
+                <li>Once customers submit the full application, approvals are strong.</li>
+                <li>Repayment records cover most completed accounts and show positive projected payback.</li>
+                <li>Full-application data usually confirms or improves the risk read.</li>
               </ul>
             </div>
             """,
@@ -672,12 +690,12 @@ def render_answer_cards() -> None:
         st.markdown(
             """
             <div class="snap-card">
-              <strong>What needs caution</strong>
+              <strong>Why I would not go broad yet</strong>
               <ul>
-                <li>The biggest leak is continuation from prequal approval to full application.</li>
-                <li>Swap-in applicants are riskier and more dependent on the $1,500 floor.</li>
-                <li>Grade F has large volume but weaker conversion.</li>
-                <li>Profit proxy excludes servicing costs, cost of capital, loss timing, and realized recoveries.</li>
+                <li>The biggest leak is still getting prequalified customers to continue.</li>
+                <li>Swap-in accounts show more early repayment stress.</li>
+                <li>Grade F brings volume, but it is also where the risk stacks up.</li>
+                <li>The profit metric is still a proxy, not fully loaded margin.</li>
               </ul>
             </div>
             """,
@@ -711,18 +729,139 @@ def render_major_findings(
     st.markdown(
         f"""
         <div class="snap-card">
-          <strong>Plain-English read for management</strong>
+          <strong>The short version</strong>
           <ul>
-            <li><strong>Program funnel:</strong> demand is real, but continuation is the bottleneck. Prequal approval is {fmt_pct(summary["prequal_approval_rate"])} and final approval after full application is {fmt_pct(summary["final_approval_rate"])}, while continuation from prequal approval to full application is only {fmt_pct(summary["continuation_rate"])}.</li>
-            <li><strong>Ticket size and value:</strong> completed applications represent {fmt_money(summary["estimated_funded_amount"])} in estimated funded amount. Matched repayment accounts show {fmt_money(repayment_metrics["total_net_funded"])} net funded and {fmt_multiple(repayment_metrics["projected_payback_multiple"])} projected payback.</li>
-            <li><strong>Special underwriting:</strong> swap-in applicants complete better than non-swap applicants ({fmt_pct(swap_completion)} vs. {fmt_pct(non_swap_completion)}), but they carry higher repayment stress, including {fmt_pct(swap_chargeoff)} charge-off vs. {fmt_pct(non_swap_chargeoff)} for non-swap.</li>
-            <li><strong>Risk profile:</strong> grade F is the main risk concentration, with {fmt_int(grade_f_volume)} applications and {fmt_pct(grade_f_floor)} hitting the $1,500 floor. Its repayment charge-off rate is {fmt_pct(grade_f_chargeoff)}.</li>
-            <li><strong>Recommendation:</strong> continue selectively. Expand where volume, completion, and repayment are all acceptable; tighten or diagnose high-floor, high-F-grade, and high-missed-payment pockets before broad rollout.</li>
+            <li><strong>The demand is there:</strong> prequal approval is {fmt_pct(summary["prequal_approval_rate"])}, but only {fmt_pct(summary["continuation_rate"])} of approved customers move into a full application.</li>
+            <li><strong>The economics look workable:</strong> matched repayment accounts show {fmt_money(repayment_metrics["total_net_funded"])} net funded and a {fmt_multiple(repayment_metrics["projected_payback_multiple"])} projected payback multiple.</li>
+            <li><strong>The caution is specific:</strong> swap-in completes better than non-swap ({fmt_pct(swap_completion)} vs. {fmt_pct(non_swap_completion)}), but charge-off is higher ({fmt_pct(swap_chargeoff)} vs. {fmt_pct(non_swap_chargeoff)}).</li>
+            <li><strong>The biggest risk pocket is grade F:</strong> it has {fmt_int(grade_f_volume)} applications, {fmt_pct(grade_f_floor)} floor usage, and {fmt_pct(grade_f_chargeoff)} charge-off in matched repayment accounts.</li>
           </ul>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_management_recommendation(
+    summary: dict[str, float],
+    repayment_metrics: dict[str, float],
+    swap: pd.DataFrame,
+    grade: pd.DataFrame,
+    repayment_swap: pd.DataFrame,
+    repayment_grade: pd.DataFrame,
+) -> None:
+    swap_in = swap[swap["segment"].eq("Swap-in")]
+    non_swap = swap[swap["segment"].eq("Non-swap")]
+    repayment_swap_in = repayment_swap[repayment_swap["segment"].eq("Swap-in")]
+    repayment_non_swap = repayment_swap[repayment_swap["segment"].eq("Non-swap")]
+    grade_f = grade[grade["prequalification_risk_grade"].eq("F")]
+    repayment_f = repayment_grade[repayment_grade["prequalification_risk_grade"].eq("F")]
+    grade_e = repayment_grade[repayment_grade["prequalification_risk_grade"].eq("E")]
+
+    swap_completion = swap_in["end_to_end_completion_rate"].iloc[0] if not swap_in.empty else pd.NA
+    non_swap_completion = non_swap["end_to_end_completion_rate"].iloc[0] if not non_swap.empty else pd.NA
+    swap_chargeoff = (
+        repayment_swap_in["charge_off_rate"].iloc[0] if not repayment_swap_in.empty else pd.NA
+    )
+    non_swap_chargeoff = (
+        repayment_non_swap["charge_off_rate"].iloc[0] if not repayment_non_swap.empty else pd.NA
+    )
+    grade_f_applications = grade_f["applications"].iloc[0] if not grade_f.empty else pd.NA
+    grade_f_floor = grade_f["floor_share"].iloc[0] if not grade_f.empty else pd.NA
+    grade_f_chargeoff = repayment_f["charge_off_rate"].iloc[0] if not repayment_f.empty else pd.NA
+    grade_e_payback = grade_e["projected_payback_multiple"].iloc[0] if not grade_e.empty else pd.NA
+
+    st.subheader("Overall Recommendation To Management")
+    st.markdown(
+        f"""
+        <div class="snap-callout">
+          <strong>Clear answer:</strong> continue the program, but do it selectively. The data does not argue
+          for shutting it down: repayment shows a {fmt_multiple(repayment_metrics["projected_payback_multiple"])}
+          projected payback multiple and {fmt_money(repayment_metrics["profit_proxy"])} profit proxy. It also
+          does not support a wide-open rollout yet, because continuation is only {fmt_pct(summary["continuation_rate"])}
+          and the risk is concentrated in swap-in and lower-grade applicants.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            f"""
+            <div class="snap-card">
+              <strong>Decision</strong>
+              <p>Keep going, but scale in lanes where conversion and repayment both look healthy.</p>
+              <p><strong>Do not</strong> treat this as a blanket policy expansion yet.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            f"""
+            <div class="snap-card">
+              <strong>Why that is the middle answer</strong>
+              <p>The program has demand and positive payback, but the weak point is customer follow-through:
+              {fmt_pct(summary["continuation_rate"])} continuation after prequal approval.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with c3:
+        st.markdown(
+            f"""
+            <div class="snap-card">
+              <strong>Main guardrail</strong>
+              <p>Watch swap-in and grade F closely. Swap-in charge-off is {fmt_pct(swap_chargeoff)} vs.
+              {fmt_pct(non_swap_chargeoff)} for non-swap, and grade F charge-off is {fmt_pct(grade_f_chargeoff)}.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.altair_chart(funnel_chart(summary), use_container_width=True)
+    with c2:
+        st.altair_chart(repayment_profit_grade_chart(repayment_grade), use_container_width=True)
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.altair_chart(repayment_outcome_chart(repayment_swap), use_container_width=True)
+    with c2:
+        st.altair_chart(swap_chart(swap), use_container_width=True)
+
+    action_plan = pd.DataFrame(
+        [
+            {
+                "Management Area": "Program decision",
+                "What I would do": "Continue, but expand selectively",
+                "Why": f"Payback is {fmt_multiple(repayment_metrics['projected_payback_multiple'])}, but risk is not even across the book.",
+            },
+            {
+                "Management Area": "Growth",
+                "What I would do": "Fix continuation before chasing more top-of-funnel volume",
+                "Why": f"Only {fmt_pct(summary['continuation_rate'])} of prequal-approved customers continue to full application.",
+            },
+            {
+                "Management Area": "Underwriting",
+                "What I would do": "Keep swap-in as an exception lane with tighter monitoring",
+                "Why": f"Swap-in completes at {fmt_pct(swap_completion)} vs. {fmt_pct(non_swap_completion)} for non-swap, but charge-off is higher.",
+            },
+            {
+                "Management Area": "Risk policy",
+                "What I would do": "Review grade F and floor-heavy approvals before broad rollout",
+                "Why": f"Grade F has {fmt_int(grade_f_applications)} applications, {fmt_pct(grade_f_floor)} floor usage, and {fmt_pct(grade_f_chargeoff)} charge-off.",
+            },
+            {
+                "Management Area": "Profitability",
+                "What I would do": "Move from profit proxy to fully loaded margin before a final scale decision",
+                "Why": f"Grade E payback is only {fmt_multiple(grade_e_payback)}, and current profit excludes servicing cost, cost of capital, and realized losses.",
+            },
+        ]
+    )
+    st.dataframe(action_plan, hide_index=True, use_container_width=True)
 
 
 def render_repayment_profitability_answer(
@@ -752,11 +891,11 @@ def render_repayment_profitability_answer(
     st.markdown(
         f"""
         <div class="snap-callout">
-          <strong>Simple answer:</strong> repayment is directionally positive, but it is not a blank-check
-          expansion story. The matched accounts show {fmt_money(repayment_metrics["total_net_funded"])}
+          <strong>Simple answer:</strong> repayment looks good enough to keep testing, but not good enough
+          to remove the guardrails. Matched accounts show {fmt_money(repayment_metrics["total_net_funded"])}
           net funded, {fmt_money(repayment_metrics["total_projected_paid"])} projected paid, and a
-          {fmt_multiple(repayment_metrics["projected_payback_multiple"])} payback multiple. That creates a
-          {fmt_money(repayment_metrics["profit_proxy"])} profit proxy before fully loaded costs.
+          {fmt_multiple(repayment_metrics["projected_payback_multiple"])} payback multiple. That leaves
+          {fmt_money(repayment_metrics["profit_proxy"])} of profit proxy before fully loaded costs.
         </div>
         """,
         unsafe_allow_html=True,
@@ -764,12 +903,12 @@ def render_repayment_profitability_answer(
     st.markdown(
         f"""
         <div class="snap-card">
-          <strong>What the repayment data says</strong>
+          <strong>What I take from the repayment data</strong>
           <ul>
-            <li>{fmt_pct(paid_active_share)} of matched accounts are currently active or paid, while charge-offs are {fmt_pct(repayment_metrics["charge_off_rate"])}.</li>
-            <li>Swap-in accounts have a similar payback multiple, but more early stress: missed payment at day 45 is {fmt_pct(swap_missed)} vs. {fmt_pct(non_swap_missed)} for non-swap, and charge-off is {fmt_pct(swap_chargeoff)} vs. {fmt_pct(non_swap_chargeoff)}.</li>
-            <li>Grade E is the weakest profitability pocket, with only {fmt_multiple(grade_e_payback)} payback and {fmt_money(grade_e_profit)} profit proxy per account.</li>
-            <li>Grade F contributes meaningful total projected profit because it has volume, but it also has the highest charge-off pressure at {fmt_pct(grade_f_chargeoff)}.</li>
+            <li>{fmt_pct(paid_active_share)} of matched accounts are active or paid, while charge-offs are {fmt_pct(repayment_metrics["charge_off_rate"])}.</li>
+            <li>Swap-in does not look broken, but it is noisier early: missed payment at day 45 is {fmt_pct(swap_missed)} vs. {fmt_pct(non_swap_missed)} for non-swap, and charge-off is {fmt_pct(swap_chargeoff)} vs. {fmt_pct(non_swap_chargeoff)}.</li>
+            <li>Grade E is the weakest profitability pocket, with {fmt_multiple(grade_e_payback)} payback and {fmt_money(grade_e_profit)} profit proxy per account.</li>
+            <li>Grade F still matters because it has volume, but it is also carrying the highest charge-off pressure at {fmt_pct(grade_f_chargeoff)}.</li>
           </ul>
         </div>
         """,
@@ -866,10 +1005,10 @@ def render_risk_profile_answer(
     st.markdown(
         f"""
         <div class="snap-callout">
-          <strong>Simple answer:</strong> the program is not uniformly risky, but risk is concentrated.
-          Grade F is the main pressure point: {fmt_int(grade_f_applications)} applications, {fmt_pct(grade_f_floor)}
-          using the $1,500 floor, {fmt_pct(grade_f_completion)} end-to-end completion, and
-          {fmt_pct(grade_f_chargeoff)} charge-off among matched repayment accounts.
+          <strong>Simple answer:</strong> this is not a uniformly risky program. The risk is clustered.
+          Grade F is the clearest pressure point: {fmt_int(grade_f_applications)} applications,
+          {fmt_pct(grade_f_floor)} using the $1,500 floor, {fmt_pct(grade_f_completion)} end-to-end completion,
+          and {fmt_pct(grade_f_chargeoff)} charge-off among matched repayment accounts.
         </div>
         """,
         unsafe_allow_html=True,
@@ -877,11 +1016,11 @@ def render_risk_profile_answer(
     st.markdown(
         f"""
         <div class="snap-card">
-          <strong>What changed after full application?</strong>
+          <strong>What changes after the full application?</strong>
           <ul>
-            <li>For applicants who reached full application, risk usually looked better: {fmt_pct(improved_share)} improved and {fmt_pct(same_share)} stayed the same.</li>
-            <li>Only {fmt_pct(worsened_share)} worsened, so collecting fuller applicant data does appear to sharpen the risk read.</li>
-            <li>The special underwriting risk is mostly about concentration: swap-in has {fmt_pct(swap_floor)} floor usage and {fmt_pct(swap_chargeoff)} charge-off, so it should be monitored as a targeted exception rather than treated as standard policy.</li>
+            <li>For applicants who reached the full application, risk usually looked better: {fmt_pct(improved_share)} improved and {fmt_pct(same_share)} stayed the same.</li>
+            <li>Only {fmt_pct(worsened_share)} worsened, which suggests the full application is helping sharpen the risk read.</li>
+            <li>Swap-in should stay as a monitored exception lane. It has {fmt_pct(swap_floor)} floor usage and {fmt_pct(swap_chargeoff)} charge-off.</li>
           </ul>
         </div>
         """,
@@ -992,16 +1131,8 @@ with st.sidebar:
     merchant_options = sorted(data["merchant_id"].dropna().astype(int).unique().tolist())
     selected_merchants = st.multiselect("Merchant ID", merchant_options, default=merchant_options)
 
-    min_segment_volume = st.slider(
-        "Minimum Applications For Segment Tables",
-        min_value=1,
-        max_value=25,
-        value=5,
-        step=1,
-    )
-
     st.divider()
-    st.caption("Use filters to stress-test whether the recommendation changes by region, merchant, grade, or swap-in status.")
+    st.caption("Use filters to see whether the recommendation changes by region, merchant, grade, or swap-in status.")
 
 filtered = filter_data(
     data,
@@ -1029,12 +1160,10 @@ monthly = monthly_funnel(filtered)
 swap = swap_summary(filtered)
 grade = risk_grade_summary(filtered)
 migration = risk_migration_summary(filtered)
-merchants = merchant_segments(filtered)
-segments = recommendation_segments(filtered, min_applications=min_segment_volume)
 
 st.title("Medical Equipment Financing Program Case Study")
 st.markdown(
-    "Management Dashboard For Evaluating Snap's Prequalification-Based Financing Program, Special Underwriting Logic, And Recommended Next Steps."
+    "A management read on whether this financing program is worth continuing, where it is working, and where it needs guardrails."
 )
 render_source_banner(data)
 
@@ -1045,16 +1174,15 @@ tabs = st.tabs(
         "Special Underwriting",
         "Risk Deep Dive",
         "Repayment & Profitability",
-        "Recommendation Detail",
+        "Management Recommendation",
         "Remaining Caveats",
         "Appendix",
     ]
 )
 
 with tabs[0]:
-    render_metric_row(summary)
+    render_executive_kpis(summary, repayment_metrics if not repayment_filtered.empty else None)
     if not repayment_filtered.empty:
-        render_repayment_metric_row(repayment_metrics)
         render_major_findings(summary, repayment_metrics, swap, grade, repayment_swap, repayment_grade)
     render_answer_cards()
     st.altair_chart(funnel_chart(summary), use_container_width=True)
@@ -1062,7 +1190,7 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Program Funnel")
     st.markdown(
-        "The strongest funnel point is final approval after a customer submits the full application. The main opportunity is earlier: moving more prequalified customers into full applications."
+        "The funnel is strongest after a customer submits the full application. The bigger opportunity is earlier: getting more prequalified customers to keep going."
     )
     col1, col2 = st.columns([1, 1])
     with col1:
@@ -1117,7 +1245,7 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Swap-In And Special Underwriting Logic")
     st.markdown(
-        "Swap-in applications have higher completion but higher risk. The $1,500 floor is the clearest measurable effect of the special underwriting logic in this dataset."
+        "Swap-in helps more customers get through the process, but it also brings more risk. The $1,500 floor is the clearest place where that tradeoff shows up."
     )
     c1, c2 = st.columns([1, 1])
     with c1:
@@ -1154,9 +1282,9 @@ with tabs[2]:
     st.markdown(
         """
         <div class="snap-warning">
-          <strong>Interpretation:</strong> swap-in logic should be treated as incremental growth with a guardrail,
-          not as a blanket underwriting expansion. The repayment tab adds account outcomes, but projected paid
-          amount is still a proxy rather than a fully loaded profitability view.
+          <strong>Management read:</strong> use swap-in as a controlled growth lever, not as standard policy.
+          The repayment tab adds the account outcome view, but projected paid amount is still a proxy rather
+          than fully loaded profitability.
         </div>
         """,
         unsafe_allow_html=True,
@@ -1190,102 +1318,27 @@ with tabs[4]:
         )
 
 with tabs[5]:
-    st.subheader("Segment Recommendation Detail")
-    st.markdown(
-        "Segments are grouped by region, merchant, prequalification risk grade, and swap-in status. Use this view with the repayment tab to prioritize segments that combine application volume, conversion, lower risk, and acceptable account outcomes."
-    )
-
-    if segments.empty:
-        st.info("No segment has enough applications for the selected minimum volume.")
+    if repayment_filtered.empty:
+        st.subheader("Overall Recommendation To Management")
+        st.info("No repayment records match the selected filters, so the recommendation cannot include account outcomes yet.")
     else:
-        st.altair_chart(recommendation_chart(segments), use_container_width=True)
-
-        recommendation_table = segments[
-            [
-                "management_read",
-                "region",
-                "merchant_id",
-                "prequalification_risk_grade",
-                "swap_in_status",
-                "applications",
-                "completed_accounts",
-                "completion_rate",
-                "estimated_funded_amount",
-                "avg_completed_ticket_size",
-                "avg_prequal_risk_score",
-                "avg_final_risk_score",
-                "floor_share",
-            ]
-        ].rename(
-            columns={
-                "management_read": "Management Read",
-                "region": "Region",
-                "merchant_id": "Merchant ID",
-                "prequalification_risk_grade": "Prequal Grade",
-                "swap_in_status": "Swap-In Status",
-                "applications": "Applications",
-                "completed_accounts": "Completed Accounts",
-                "completion_rate": "Completion Rate",
-                "estimated_funded_amount": "Estimated Funded Amount",
-                "avg_completed_ticket_size": "Avg Completed Ticket Size",
-                "avg_prequal_risk_score": "Avg Prequal Risk Score",
-                "avg_final_risk_score": "Avg Final Risk Score",
-                "floor_share": "$1,500 Floor Share",
-            }
+        render_management_recommendation(
+            summary,
+            repayment_metrics,
+            swap,
+            grade,
+            repayment_swap,
+            repayment_grade,
         )
-        st.dataframe(
-            format_table(
-                recommendation_table,
-                money_cols=["Estimated Funded Amount", "Avg Completed Ticket Size"],
-                pct_cols=["Completion Rate", "$1,500 Floor Share"],
-                int_cols=["Applications", "Completed Accounts"],
-            ),
-            hide_index=True,
-            use_container_width=True,
-            height=520,
-        )
-
-        st.download_button(
-            "Download Recommendation Segments",
-            data=segments.to_csv(index=False),
-            file_name="case_study_recommendation_segments.csv",
-            mime="text/csv",
-        )
-
-    st.subheader("Top Merchants By Estimated Funded Amount")
-    top_merchants = merchants.head(15).rename(
-        columns={
-            "merchant_id": "Merchant ID",
-            "region": "Region",
-            "applications": "Applications",
-            "completed_applications": "Completed Applications",
-            "estimated_funded_amount": "Estimated Funded Amount",
-            "avg_prequal_risk_score": "Avg Prequal Risk Score",
-            "avg_final_risk_score": "Avg Final Risk Score",
-            "end_to_end_completion_rate": "End-To-End Completion",
-            "swap_in_share": "Swap-In Share",
-            "floor_share": "$1,500 Floor Share",
-        }
-    )
-    st.dataframe(
-        format_table(
-            top_merchants,
-            money_cols=["Estimated Funded Amount"],
-            pct_cols=["End-To-End Completion", "Swap-In Share", "$1,500 Floor Share"],
-            int_cols=["Applications", "Completed Applications"],
-        ),
-        hide_index=True,
-        use_container_width=True,
-    )
 
 with tabs[6]:
-    st.subheader("Remaining Caveats")
+    st.subheader("What We Still Need To Know")
     st.markdown(
         """
         <div class="snap-warning">
-          <strong>Key caveat:</strong> the repayment extract improves the decision read, but projected amount
-          paid minus net funded amount is still a proxy. It does not include fully loaded margin, cost of
-          capital, servicing expense, realized recovery timing, or a standard-policy counterfactual.
+          <strong>Main caveat:</strong> the repayment file makes the recommendation much stronger, but profit
+          proxy is still not the same as final margin. It does not include cost of capital, servicing expense,
+          loss timing, recoveries, or a clean standard-policy comparison.
         </div>
         """,
         unsafe_allow_html=True,
@@ -1331,10 +1384,10 @@ with tabs[6]:
     )
     st.dataframe(unanswered, hide_index=True, use_container_width=True)
 
-    st.subheader("Recommended Follow-Up Data Request")
+    st.subheader("Best Follow-Up Data To Ask For")
     st.markdown(
         """
-        Request the remaining account economics and policy comparison fields, joined by application number:
+        To turn this from a strong directional recommendation into a full scale/no-scale decision, ask for:
 
         - Funded date and contractual first-payment date
         - Realized amount paid, revenue, fees, loss amount, recoveries, and servicing cost
