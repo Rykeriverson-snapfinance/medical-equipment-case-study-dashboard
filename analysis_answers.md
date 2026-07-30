@@ -24,10 +24,14 @@ The dataset does not contain actual funded amount. The dashboard uses final appr
 
 ## Repayment And Profitability
 
-The current data does not answer repayment or profitability. There are no fields for net funded amount, projected amount paid, missed payments, past due balances, early payoff, charge-off, or account status. Because of this, management should not make a broad expansion decision from this file alone.
+The repayment extract adds 520 account-level repayment rows that de-duplicate to 517 unique matched applications, or about 89.3% of completed applications. Across the matched repayment records, projected amount paid exceeds net funded amount by roughly $215.7K, with a projected payback multiple of 1.24x.
+
+The repayment view still argues for guardrails. Missed payment at day 45 is 16.8%, no payments by day 60 is 3.9%, 30-plus past due by day 120 is 7.4%, and charge-off status is 8.7%. Early payoff by day 120 is 28.8%, which helps account performance but should be interpreted with product economics and timing.
+
+Profitability remains partially answered rather than fully proven. The dashboard uses projected amount paid minus net funded amount as a profit proxy, but the file does not include cost of capital, servicing cost, realized recovery timing, charge-off amount, or a standard-policy counterfactual.
 
 ## Recommendation
 
-Continue the program selectively. Expand or prioritize lower-risk merchants and regions with strong completion and meaningful estimated funded volume. Monitor higher-risk swap-in and grade F segments closely, especially where the $1,500 floor is driving most approvals. Tighten or diagnose merchants with meaningful application volume but weak completion.
+Continue the program selectively. Expand or prioritize lower-risk merchants and regions with strong completion, meaningful funded volume, and acceptable repayment outcomes. Monitor higher-risk swap-in and grade F segments closely, especially where the $1,500 floor is driving most approvals. Tighten or diagnose merchants with meaningful application volume but weak completion or weaker repayment outcomes.
 
-Before broad expansion, request account-level repayment and profitability data joined to application number.
+Before broad expansion, request fully loaded account economics and a standard-policy counterfactual joined to application number.

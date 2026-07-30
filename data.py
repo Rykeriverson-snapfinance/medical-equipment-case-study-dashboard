@@ -8,6 +8,7 @@ import streamlit as st
 
 
 DATA_PATH = Path(__file__).parent / "data" / "case_study_dataset.csv"
+REPAYMENT_PATH = Path(__file__).parent / "data" / "repayment_results.csv"
 
 BOOL_COLUMNS = [
     "is_prequal_approved",
@@ -40,19 +41,40 @@ REQUIRED_COLUMNS = {
     "is_completed",
 }
 
+REPAYMENT_BOOL_COLUMNS = [
+    "missed_payment_day_45",
+    "no_payments_first_day_60",
+    "past_due_30_plus_days_day_120",
+    "early_payoff_day_120",
+]
+
+REPAYMENT_REQUIRED_COLUMNS = {
+    "Application Number",
+    "prequal_submit_dt",
+    "pricing_factor",
+    "account_status",
+    "net_funded_amt",
+    "invoice_amount",
+    "invoice_processing_fee",
+    "missed_payment_day_45",
+    "no_payments_first_day_60",
+    "past_due_days_day_90",
+    "past_due_days_day_120",
+    "past_due_30_plus_days_day_120",
+    "early_payoff_day_120",
+    "past_due_ratio_day_180",
+    "projected_amount_paid",
+}
+
 GRADE_ORDER = ["A", "B", "C", "D", "E", "F", "G"]
 GRADE_RANK = {grade: idx for idx, grade in enumerate(GRADE_ORDER)}
 
 
 def _to_bool(series: pd.Series) -> pd.Series:
-    return (
-        series.astype("string")
-        .str.strip()
-        .str.upper()
-        .map({"TRUE": True, "FALSE": False, "1": True, "0": False})
-        .fillna(False)
-        .astype(bool)
+    mapped = series.astype("string").str.strip().str.upper().map(
+        {"TRUE": True, "FALSE": False, "1": True, "0": False}
     )
+    return pd.Series(np.where(mapped.isna(), False, mapped), index=series.index).astype(bool)
 
 
 def _rate(numerator: float, denominator: float) -> float:
@@ -71,8 +93,12 @@ def load_application_data() -> pd.DataFrame:
     result = data.copy()
     result = result.rename(columns={"Application Number": "application_number"})
 
-    result["prequal_submit_dt"] = pd.to_datetime(result["prequal_submit_dt"], errors="coerce")
-    result["prequal_submit_month"] = pd.to_datetime(result["prequal_submit_month"], errors="coerce")
+    result["prequal_submit_dt"] = pd.to_datetime(
+        result["prequal_submit_dt"], format="%m/%d/%y", errors="coerce"
+    )
+    result["prequal_submit_month"] = pd.to_datetime(
+        result["prequal_submit_month"], format="%m/%d/%y", errors="coerce"
+    )
 
     for column in BOOL_COLUMNS:
         result[column] = _to_bool(result[column])
@@ -140,6 +166,161 @@ def filter_data(
         & (data["prequal_submit_dt"] <= end_date)
     )
     return data.loc[mask].copy()
+
+
+
+@st.cache_data(show_spinner="Loading repayment results...")
+def load_repayment_data() -> pd.DataFrame:
+    data = pd.read_csv(REPAYMENT_PATH, encoding="utf-8-sig")
+    missing = REPAYMENT_REQUIRED_COLUMNS.difference(data.columns)
+    if missing:
+        raise KeyError(f"Repayment data is missing required columns: {sorted(missing)}")
+
+    result = data.drop_duplicates().copy()
+    result = result.rename(columns={"Application Number": "application_number"})
+    result["prequal_submit_dt"] = pd.to_datetime(
+        result["prequal_submit_dt"], format="%m/%d/%y", errors="coerce"
+    )
+
+    for column in REPAYMENT_BOOL_COLUMNS:
+        result[column] = _to_bool(result[column])
+
+    numeric_columns = [
+        "pricing_factor",
+        "net_funded_amt",
+        "invoice_amount",
+        "invoice_processing_fee",
+        "past_due_days_day_90",
+        "past_due_days_day_120",
+        "past_due_ratio_day_180",
+        "projected_amount_paid",
+    ]
+    for column in numeric_columns:
+        result[column] = pd.to_numeric(result[column], errors="coerce")
+
+    result["profit_proxy"] = result["projected_amount_paid"] - result["net_funded_amt"]
+    result["projected_payback_multiple"] = result["projected_amount_paid"] / result[
+        "net_funded_amt"
+    ].replace(0, np.nan)
+    result["charge_off_flag"] = result["account_status"].eq("CHARGE_OFF")
+    return result
+
+
+def joined_repayment_data(applications: pd.DataFrame, repayment: pd.DataFrame) -> pd.DataFrame:
+    return applications.merge(
+        repayment,
+        on="application_number",
+        how="inner",
+        suffixes=("", "_repayment"),
+    )
+
+
+def repayment_summary(data: pd.DataFrame, completed_application_count: int) -> dict[str, float]:
+    accounts = data["application_number"].nunique()
+    total_net_funded = data["net_funded_amt"].sum()
+    total_projected_paid = data["projected_amount_paid"].sum()
+
+    return {
+        "repayment_accounts": accounts,
+        "repayment_coverage_rate": _rate(accounts, completed_application_count),
+        "total_net_funded": total_net_funded,
+        "avg_ticket_size": data["net_funded_amt"].mean(),
+        "total_projected_paid": total_projected_paid,
+        "profit_proxy": data["profit_proxy"].sum(),
+        "profit_proxy_per_account": data["profit_proxy"].mean(),
+        "projected_payback_multiple": _rate(total_projected_paid, total_net_funded),
+        "missed_payment_day_45_rate": data["missed_payment_day_45"].mean(),
+        "no_payments_first_day_60_rate": data["no_payments_first_day_60"].mean(),
+        "past_due_30_plus_day_120_rate": data["past_due_30_plus_days_day_120"].mean(),
+        "early_payoff_day_120_rate": data["early_payoff_day_120"].mean(),
+        "charge_off_rate": data["charge_off_flag"].mean(),
+    }
+
+
+def repayment_by_swap(data: pd.DataFrame) -> pd.DataFrame:
+    grouped = (
+        data.groupby("swap_in_approval")
+        .agg(
+            accounts=("application_number", "nunique"),
+            total_net_funded=("net_funded_amt", "sum"),
+            avg_ticket_size=("net_funded_amt", "mean"),
+            total_projected_paid=("projected_amount_paid", "sum"),
+            profit_proxy=("profit_proxy", "sum"),
+            profit_proxy_per_account=("profit_proxy", "mean"),
+            missed_payment_day_45_rate=("missed_payment_day_45", "mean"),
+            no_payments_first_day_60_rate=("no_payments_first_day_60", "mean"),
+            past_due_30_plus_day_120_rate=("past_due_30_plus_days_day_120", "mean"),
+            early_payoff_day_120_rate=("early_payoff_day_120", "mean"),
+            charge_off_rate=("charge_off_flag", "mean"),
+            avg_prequal_risk_score=("prequalification_risk_score", "mean"),
+        )
+        .reset_index()
+    )
+    grouped["segment"] = np.where(grouped["swap_in_approval"], "Swap-in", "Non-swap")
+    grouped["projected_payback_multiple"] = grouped["total_projected_paid"] / grouped[
+        "total_net_funded"
+    ].replace(0, np.nan)
+    return grouped.sort_values("swap_in_approval")
+
+
+def repayment_by_grade(data: pd.DataFrame) -> pd.DataFrame:
+    grouped = (
+        data.groupby("prequalification_risk_grade", dropna=False)
+        .agg(
+            accounts=("application_number", "nunique"),
+            total_net_funded=("net_funded_amt", "sum"),
+            avg_ticket_size=("net_funded_amt", "mean"),
+            total_projected_paid=("projected_amount_paid", "sum"),
+            profit_proxy=("profit_proxy", "sum"),
+            profit_proxy_per_account=("profit_proxy", "mean"),
+            missed_payment_day_45_rate=("missed_payment_day_45", "mean"),
+            no_payments_first_day_60_rate=("no_payments_first_day_60", "mean"),
+            past_due_30_plus_day_120_rate=("past_due_30_plus_days_day_120", "mean"),
+            early_payoff_day_120_rate=("early_payoff_day_120", "mean"),
+            charge_off_rate=("charge_off_flag", "mean"),
+        )
+        .reset_index()
+    )
+    grouped["projected_payback_multiple"] = grouped["total_projected_paid"] / grouped[
+        "total_net_funded"
+    ].replace(0, np.nan)
+    grouped["grade_sort"] = grouped["prequalification_risk_grade"].map(GRADE_RANK).fillna(99)
+    return grouped.sort_values("grade_sort").drop(columns="grade_sort")
+
+
+def repayment_by_region(data: pd.DataFrame) -> pd.DataFrame:
+    grouped = (
+        data.groupby("region", dropna=False)
+        .agg(
+            accounts=("application_number", "nunique"),
+            total_net_funded=("net_funded_amt", "sum"),
+            avg_ticket_size=("net_funded_amt", "mean"),
+            total_projected_paid=("projected_amount_paid", "sum"),
+            profit_proxy=("profit_proxy", "sum"),
+            profit_proxy_per_account=("profit_proxy", "mean"),
+            missed_payment_day_45_rate=("missed_payment_day_45", "mean"),
+            no_payments_first_day_60_rate=("no_payments_first_day_60", "mean"),
+            past_due_30_plus_day_120_rate=("past_due_30_plus_days_day_120", "mean"),
+            early_payoff_day_120_rate=("early_payoff_day_120", "mean"),
+            charge_off_rate=("charge_off_flag", "mean"),
+        )
+        .reset_index()
+    )
+    grouped["projected_payback_multiple"] = grouped["total_projected_paid"] / grouped[
+        "total_net_funded"
+    ].replace(0, np.nan)
+    return grouped.sort_values("profit_proxy", ascending=False)
+
+
+def repayment_status_summary(data: pd.DataFrame) -> pd.DataFrame:
+    grouped = (
+        data.groupby("account_status", dropna=False)
+        .agg(accounts=("application_number", "nunique"))
+        .reset_index()
+        .sort_values("accounts", ascending=False)
+    )
+    grouped["share"] = grouped["accounts"] / grouped["accounts"].sum()
+    return grouped
 
 
 def funnel_summary(data: pd.DataFrame) -> dict[str, float]:

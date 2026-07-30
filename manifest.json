@@ -24,6 +24,7 @@
     ".env.example": {},
     ".streamlit/config.toml": {},
     "queries/case_study_reference.sql": {},
-    "data/case_study_dataset.csv": {}
+    "data/case_study_dataset.csv": {},
+    "data/repayment_results.csv": {}
   }
 }

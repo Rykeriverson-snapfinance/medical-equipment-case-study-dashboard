@@ -8,20 +8,22 @@ app:
   status: "case-study"
 business:
   question: "Should Snap continue, expand, modify, or tighten the medical equipment provider special underwriting program?"
-  decision_or_workflow: "Support a management review of the program funnel, special underwriting impact, applicant risk profile, and follow-up data needs."
+  decision_or_workflow: "Support a management review of the program funnel, special underwriting impact, applicant risk profile, repayment outcomes, and follow-up data needs."
 data:
   classification: "case-study extract; do not treat as live production reporting"
-  row_grain: "One row per prequalification application"
+  row_grain: "One row per prequalification application; one repayment row per funded account in the repayment extract"
   date_grain: "Prequalification submit date and submit month"
   refresh_cadence: "Static ad hoc extract packaged with dashboard"
   source_of_truth:
     - "data/case_study_dataset.csv"
+    - "data/repayment_results.csv"
   prepared_assets:
     - "data/case_study_dataset.csv"
+    - "data/repayment_results.csv"
   pii: false
   notes:
     - "Application numbers are included only as case-study record identifiers."
-    - "No repayment or profitability table was provided."
+    - "Repayment rows are joined to application rows by application number."
 metrics:
   - name: "Prequal Applications"
     definition: "Count of application records in the selected filter scope."
@@ -47,6 +49,21 @@ metrics:
   - name: "Risk Grade Migration"
     definition: "Final risk grade compared with prequalification risk grade for applicants who submitted a full application."
     filters: ["Prequal Submit Date", "Region", "Merchant ID", "Prequalification Risk Grade", "Swap-In Approval"]
+  - name: "Repayment Coverage"
+    definition: "Matched repayment accounts divided by completed applications in the selected filter scope."
+    filters: ["Prequal Submit Date", "Region", "Merchant ID", "Prequalification Risk Grade", "Swap-In Approval"]
+  - name: "Net Funded"
+    definition: "Sum of repayment net_funded_amt for matched repayment accounts."
+    filters: ["Prequal Submit Date", "Region", "Merchant ID", "Prequalification Risk Grade", "Swap-In Approval"]
+  - name: "Projected Payback Multiple"
+    definition: "Projected amount paid divided by net funded amount for matched repayment accounts."
+    filters: ["Prequal Submit Date", "Region", "Merchant ID", "Prequalification Risk Grade", "Swap-In Approval"]
+  - name: "Profit Proxy"
+    definition: "Projected amount paid minus net funded amount; excludes cost of capital, servicing costs, recoveries, and realized timing."
+    filters: ["Prequal Submit Date", "Region", "Merchant ID", "Prequalification Risk Grade", "Swap-In Approval"]
+  - name: "Repayment Outcome Rates"
+    definition: "Mean of repayment outcome flags including missed payment day 45, no payments day 60, 30-plus past due day 120, early payoff day 120, and charge-off status."
+    filters: ["Prequal Submit Date", "Region", "Merchant ID", "Prequalification Risk Grade", "Swap-In Approval"]
 filters:
   - name: "Prequal Submit Date"
     field: "prequal_submit_dt"
@@ -69,8 +86,9 @@ outputs:
     - "Funnel"
     - "Special Underwriting"
     - "Risk Profile"
+    - "Repayment"
     - "Recommendation Detail"
-    - "Data Gaps"
+    - "Remaining Caveats"
     - "Appendix"
   exportable: true
 validation:
@@ -78,9 +96,11 @@ validation:
   data_checks:
     - "Required source columns are validated before calculations run."
     - "Boolean, date, and numeric fields are normalized in data.py."
+    - "Repayment rows are joined to filtered application rows by application number."
     - "Rate denominators are protected against zero denominators."
     - "Empty filter results display a warning and stop rendering."
   risk_areas:
     - "Estimated funded amount is a proxy using final approval amount for completed applications."
-    - "Repayment, delinquency, charge-off, and profitability questions are explicitly marked unavailable."
+    - "Profit proxy is not fully loaded margin and should not be treated as production profitability."
+    - "Repayment extract does not include funded date, charge-off amount, realized recovery timing, cost of capital, servicing cost, or standard-policy counterfactual."
     - "Static local extract should not be presented as live or refreshed production reporting."

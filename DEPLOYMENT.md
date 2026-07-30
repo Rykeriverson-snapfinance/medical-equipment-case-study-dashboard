@@ -26,8 +26,8 @@ Open the local URL printed by Streamlit, usually `http://localhost:8501`.
 
 ## Posit Connect Consideration
 
-This app includes a static local CSV extract and is built for an external case-study handoff, not a governed production deployment. Before deploying to internal Posit Connect, replace the packaged CSV with an approved prepared asset or warehouse pull, regenerate a full transitive lockfile, and run the Snap Streamlit validation workflow.
+This app includes static local application and repayment CSV extracts and is built for an external case-study handoff, not a governed production deployment. Before deploying to internal Posit Connect, replace the packaged CSVs with approved prepared assets or warehouse pulls, regenerate a full transitive lockfile, and run the Snap Streamlit validation workflow.
 
 ## Data And Security
 
-No secrets are required. Do not add credentials or live warehouse access to this package for the recruiter handoff. The provided dataset does not include direct customer PII, but application-level rows should still be treated as case-study data and shared only as intended for the case-study review.
+No secrets are required. Do not add credentials or live warehouse access to this package for the recruiter handoff. The provided datasets do not include direct customer PII, but application-level and account-level rows should still be treated as case-study data and shared only as intended for the case-study review.

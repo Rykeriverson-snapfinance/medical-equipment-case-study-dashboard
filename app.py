@@ -9,10 +9,17 @@ import streamlit as st
 from data import (
     filter_data,
     funnel_summary,
+    joined_repayment_data,
     load_application_data,
+    load_repayment_data,
     merchant_segments,
     monthly_funnel,
     recommendation_segments,
+    repayment_by_grade,
+    repayment_by_region,
+    repayment_by_swap,
+    repayment_status_summary,
+    repayment_summary,
     risk_grade_summary,
     risk_migration_summary,
     source_metadata,
@@ -140,7 +147,19 @@ def fmt_money(value: float) -> str:
     return f"${value:,.0f}"
 
 
-def format_table(frame: pd.DataFrame, money_cols=None, pct_cols=None, int_cols=None) -> pd.DataFrame:
+def fmt_multiple(value: float) -> str:
+    if pd.isna(value):
+        return "N/A"
+    return f"{value:.2f}x"
+
+
+def format_table(
+    frame: pd.DataFrame,
+    money_cols=None,
+    pct_cols=None,
+    int_cols=None,
+    multiple_cols=None,
+) -> pd.DataFrame:
     result = frame.copy()
     for col in money_cols or []:
         if col in result:
@@ -151,6 +170,9 @@ def format_table(frame: pd.DataFrame, money_cols=None, pct_cols=None, int_cols=N
     for col in int_cols or []:
         if col in result:
             result[col] = result[col].map(fmt_int)
+    for col in multiple_cols or []:
+        if col in result:
+            result[col] = result[col].map(fmt_multiple)
     return result
 
 
@@ -373,6 +395,106 @@ def recommendation_chart(segments: pd.DataFrame) -> alt.Chart:
     )
 
 
+def repayment_outcome_chart(repayment_swap: pd.DataFrame) -> alt.Chart:
+    long = repayment_swap.melt(
+        id_vars=["segment"],
+        value_vars=[
+            "missed_payment_day_45_rate",
+            "no_payments_first_day_60_rate",
+            "past_due_30_plus_day_120_rate",
+            "charge_off_rate",
+            "early_payoff_day_120_rate",
+        ],
+        var_name="metric",
+        value_name="rate",
+    )
+    long["metric"] = long["metric"].map(
+        {
+            "missed_payment_day_45_rate": "Missed payment day 45",
+            "no_payments_first_day_60_rate": "No payments day 60",
+            "past_due_30_plus_day_120_rate": "30+ past due day 120",
+            "charge_off_rate": "Charge-off",
+            "early_payoff_day_120_rate": "Early payoff day 120",
+        }
+    )
+    return (
+        alt.Chart(long)
+        .mark_bar()
+        .encode(
+            x=alt.X("metric:N", title="", axis=alt.Axis(labelAngle=-25)),
+            xOffset="segment:N",
+            y=alt.Y("rate:Q", title="Rate", axis=alt.Axis(format="%"), scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color(
+                "segment:N",
+                title="Segment",
+                scale=alt.Scale(domain=["Non-swap", "Swap-in"], range=[SNAP_BLUE, SNAP_ORANGE]),
+            ),
+            tooltip=[
+                alt.Tooltip("metric:N", title="Metric"),
+                alt.Tooltip("segment:N", title="Segment"),
+                alt.Tooltip("rate:Q", title="Rate", format=".1%"),
+            ],
+        )
+        .properties(title="Repayment Outcome Rates By Swap-In Status", height=360)
+    )
+
+
+def repayment_payback_grade_chart(repayment_grade: pd.DataFrame) -> alt.Chart:
+    return (
+        alt.Chart(repayment_grade)
+        .mark_bar(color=SNAP_GREEN_DARK)
+        .encode(
+            x=alt.X("prequalification_risk_grade:N", title="Prequalification Risk Grade"),
+            y=alt.Y("projected_payback_multiple:Q", title="Projected payback multiple"),
+            tooltip=[
+                alt.Tooltip("prequalification_risk_grade:N", title="Grade"),
+                alt.Tooltip("accounts:Q", title="Accounts", format=",.0f"),
+                alt.Tooltip("total_net_funded:Q", title="Net funded", format="$,.0f"),
+                alt.Tooltip("projected_payback_multiple:Q", title="Payback multiple", format=".2f"),
+                alt.Tooltip("charge_off_rate:Q", title="Charge-off rate", format=".1%"),
+            ],
+        )
+        .properties(title="Projected Payback Multiple By Prequal Grade", height=360)
+    )
+
+
+def account_status_chart(status: pd.DataFrame) -> alt.Chart:
+    return (
+        alt.Chart(status)
+        .mark_bar(color=SNAP_BLUE_LIGHT)
+        .encode(
+            x=alt.X("account_status:N", title="Account status", sort="-y"),
+            y=alt.Y("accounts:Q", title="Accounts"),
+            tooltip=[
+                alt.Tooltip("account_status:N", title="Status"),
+                alt.Tooltip("accounts:Q", title="Accounts", format=",.0f"),
+                alt.Tooltip("share:Q", title="Share", format=".1%"),
+            ],
+        )
+        .properties(title="Repayment Account Status Mix", height=280)
+    )
+
+
+def repayment_region_chart(region: pd.DataFrame) -> alt.Chart:
+    return (
+        alt.Chart(region)
+        .mark_bar(color=SNAP_BLUE_LIGHT)
+        .encode(
+            x=alt.X("region:N", title="Region", sort="-y"),
+            y=alt.Y("profit_proxy:Q", title="Profit proxy"),
+            tooltip=[
+                alt.Tooltip("region:N", title="Region"),
+                alt.Tooltip("accounts:Q", title="Accounts", format=",.0f"),
+                alt.Tooltip("profit_proxy:Q", title="Profit proxy", format="$,.0f"),
+                alt.Tooltip("projected_payback_multiple:Q", title="Payback multiple", format=".2f"),
+                alt.Tooltip("missed_payment_day_45_rate:Q", title="Missed payment day 45", format=".1%"),
+                alt.Tooltip("charge_off_rate:Q", title="Charge-off rate", format=".1%"),
+            ],
+        )
+        .properties(title="Repayment Profit Proxy By Region", height=300)
+    )
+
+
 def render_metric_row(summary: dict[str, float]) -> None:
     cols = st.columns(5)
     cols[0].metric("Prequal applications", fmt_int(summary["applications"]))
@@ -389,14 +511,30 @@ def render_metric_row(summary: dict[str, float]) -> None:
     cols[4].metric("Avg prequal risk score", f"{summary['avg_prequal_risk_score']:.3f}")
 
 
+def render_repayment_metric_row(summary: dict[str, float]) -> None:
+    cols = st.columns(5)
+    cols[0].metric("Repayment accounts", fmt_int(summary["repayment_accounts"]))
+    cols[1].metric("Repayment coverage", fmt_pct(summary["repayment_coverage_rate"]))
+    cols[2].metric("Net funded", fmt_money(summary["total_net_funded"]))
+    cols[3].metric("Projected paid", fmt_money(summary["total_projected_paid"]))
+    cols[4].metric("Payback multiple", fmt_multiple(summary["projected_payback_multiple"]))
+
+    cols = st.columns(5)
+    cols[0].metric("Profit proxy", fmt_money(summary["profit_proxy"]))
+    cols[1].metric("Missed pay day 45", fmt_pct(summary["missed_payment_day_45_rate"]))
+    cols[2].metric("No payments day 60", fmt_pct(summary["no_payments_first_day_60_rate"]))
+    cols[3].metric("30+ past due day 120", fmt_pct(summary["past_due_30_plus_day_120_rate"]))
+    cols[4].metric("Charge-off rate", fmt_pct(summary["charge_off_rate"]))
+
+
 def render_answer_cards() -> None:
     st.markdown(
         """
         <div class="snap-callout">
-          <strong>Management answer:</strong> Continue the program selectively, but do not expand broadly
-          until repayment and profitability data are available. The funnel shows real demand and strong final
-          approval once customers complete the full application. The risk tradeoff is concentrated in swap-in
-          and F-grade applications, where the $1,500 floor is doing most of the underwriting work.
+          <strong>Management answer:</strong> Continue the program selectively. The funnel shows real demand
+          and strong final approval once customers complete the full application, and the repayment extract
+          shows projected paid amount above net funded amount. The expansion guardrails remain swap-in,
+          F-grade concentration, and account performance signals such as missed payments and charge-offs.
         </div>
         """,
         unsafe_allow_html=True,
@@ -411,7 +549,7 @@ def render_answer_cards() -> None:
                 <li>Demand exists across regions and merchants.</li>
                 <li>Prequal approval is high and final approval is very strong after full application.</li>
                 <li>Most applicants with full-app data show improved or unchanged risk grade.</li>
-                <li>Swap-in logic appears to preserve incremental volume from advocate stores.</li>
+                <li>Repayment records cover most completed applications and project positive payback.</li>
               </ul>
             </div>
             """,
@@ -426,7 +564,7 @@ def render_answer_cards() -> None:
                 <li>The biggest leak is continuation from prequal approval to full application.</li>
                 <li>Swap-in applicants are riskier and more dependent on the $1,500 floor.</li>
                 <li>Grade F has large volume but weaker conversion.</li>
-                <li>The current file cannot prove repayment performance or profitability.</li>
+                <li>Profit proxy excludes servicing costs, cost of capital, loss timing, and realized recoveries.</li>
               </ul>
             </div>
             """,
@@ -434,16 +572,57 @@ def render_answer_cards() -> None:
         )
 
 
+def render_major_findings(
+    summary: dict[str, float],
+    repayment_metrics: dict[str, float],
+    swap: pd.DataFrame,
+    grade: pd.DataFrame,
+    repayment_swap: pd.DataFrame,
+    repayment_grade: pd.DataFrame,
+) -> None:
+    swap_in = swap[swap["segment"].eq("Swap-in")]
+    non_swap = swap[swap["segment"].eq("Non-swap")]
+    grade_f = grade[grade["prequalification_risk_grade"].eq("F")]
+    repayment_f = repayment_grade[repayment_grade["prequalification_risk_grade"].eq("F")]
+    repayment_swap_in = repayment_swap[repayment_swap["segment"].eq("Swap-in")]
+    repayment_non_swap = repayment_swap[repayment_swap["segment"].eq("Non-swap")]
+
+    swap_completion = swap_in["end_to_end_completion_rate"].iloc[0] if not swap_in.empty else pd.NA
+    non_swap_completion = non_swap["end_to_end_completion_rate"].iloc[0] if not non_swap.empty else pd.NA
+    grade_f_volume = grade_f["applications"].iloc[0] if not grade_f.empty else pd.NA
+    grade_f_floor = grade_f["floor_share"].iloc[0] if not grade_f.empty else pd.NA
+    grade_f_chargeoff = repayment_f["charge_off_rate"].iloc[0] if not repayment_f.empty else pd.NA
+    swap_chargeoff = repayment_swap_in["charge_off_rate"].iloc[0] if not repayment_swap_in.empty else pd.NA
+    non_swap_chargeoff = repayment_non_swap["charge_off_rate"].iloc[0] if not repayment_non_swap.empty else pd.NA
+
+    st.markdown(
+        f"""
+        <div class="snap-card">
+          <strong>Plain-English read for management</strong>
+          <ul>
+            <li><strong>Program funnel:</strong> demand is real, but continuation is the bottleneck. Prequal approval is {fmt_pct(summary["prequal_approval_rate"])} and final approval after full application is {fmt_pct(summary["final_approval_rate"])}, while continuation from prequal approval to full application is only {fmt_pct(summary["continuation_rate"])}.</li>
+            <li><strong>Ticket size and value:</strong> completed applications represent {fmt_money(summary["estimated_funded_amount"])} in estimated funded amount. Matched repayment accounts show {fmt_money(repayment_metrics["total_net_funded"])} net funded and {fmt_multiple(repayment_metrics["projected_payback_multiple"])} projected payback.</li>
+            <li><strong>Special underwriting:</strong> swap-in applicants complete better than non-swap applicants ({fmt_pct(swap_completion)} vs. {fmt_pct(non_swap_completion)}), but they carry higher repayment stress, including {fmt_pct(swap_chargeoff)} charge-off vs. {fmt_pct(non_swap_chargeoff)} for non-swap.</li>
+            <li><strong>Risk profile:</strong> grade F is the main risk concentration, with {fmt_int(grade_f_volume)} applications and {fmt_pct(grade_f_floor)} hitting the $1,500 floor. Its repayment charge-off rate is {fmt_pct(grade_f_chargeoff)}.</li>
+            <li><strong>Recommendation:</strong> continue selectively. Expand where volume, completion, and repayment are all acceptable; tighten or diagnose high-floor, high-F-grade, and high-missed-payment pockets before broad rollout.</li>
+          </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_source_banner(data: pd.DataFrame) -> None:
     metadata = source_metadata(data)
     st.caption(
-        "Data source: local case study CSV | "
+        "Data source: local application and repayment CSVs | "
         f"Date basis: prequalification submit date, {metadata['date_start']} to {metadata['date_end']} | "
         f"Rows: {metadata['rows']} | Merchants: {metadata['merchants']} | Regions: {metadata['regions']}"
     )
 
 
 data = load_application_data()
+repayment = load_repayment_data()
 metadata = source_metadata(data)
 
 with st.sidebar:
@@ -508,6 +687,12 @@ if filtered.empty:
     st.stop()
 
 summary = funnel_summary(filtered)
+repayment_filtered = joined_repayment_data(filtered, repayment)
+repayment_metrics = repayment_summary(repayment_filtered, int(summary["completed_applications"]))
+repayment_swap = repayment_by_swap(repayment_filtered) if not repayment_filtered.empty else pd.DataFrame()
+repayment_grade = repayment_by_grade(repayment_filtered) if not repayment_filtered.empty else pd.DataFrame()
+repayment_region = repayment_by_region(repayment_filtered) if not repayment_filtered.empty else pd.DataFrame()
+repayment_status = repayment_status_summary(repayment_filtered) if not repayment_filtered.empty else pd.DataFrame()
 monthly = monthly_funnel(filtered)
 swap = swap_summary(filtered)
 grade = risk_grade_summary(filtered)
@@ -527,14 +712,18 @@ tabs = st.tabs(
         "Funnel",
         "Special Underwriting",
         "Risk Profile",
+        "Repayment",
         "Recommendation Detail",
-        "Data Gaps",
+        "Remaining Caveats",
         "Appendix",
     ]
 )
 
 with tabs[0]:
     render_metric_row(summary)
+    if not repayment_filtered.empty:
+        render_repayment_metric_row(repayment_metrics)
+        render_major_findings(summary, repayment_metrics, swap, grade, repayment_swap, repayment_grade)
     render_answer_cards()
     st.altair_chart(funnel_chart(summary), use_container_width=True)
 
@@ -634,8 +823,8 @@ with tabs[2]:
         """
         <div class="snap-warning">
           <strong>Interpretation:</strong> swap-in logic should be treated as incremental growth with a guardrail,
-          not as proof that looser underwriting is profitable. The application data shows higher completion, but
-          repayment data is required before calling the economics positive.
+          not as a blanket underwriting expansion. The repayment tab adds account outcomes, but projected paid
+          amount is still a proxy rather than a fully loaded profitability view.
         </div>
         """,
         unsafe_allow_html=True,
@@ -697,9 +886,160 @@ with tabs[3]:
     )
 
 with tabs[4]:
+    st.subheader("Repayment Performance")
+    st.markdown(
+        "Repayment records are joined to filtered completed applications by application number. The repayment metrics should be read as account-performance indicators, not fully loaded program profitability."
+    )
+
+    if repayment_filtered.empty:
+        st.info("No repayment records match the selected filters.")
+    else:
+        render_repayment_metric_row(repayment_metrics)
+
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.altair_chart(repayment_outcome_chart(repayment_swap), use_container_width=True)
+        with c2:
+            st.altair_chart(repayment_payback_grade_chart(repayment_grade), use_container_width=True)
+
+        st.altair_chart(account_status_chart(repayment_status), use_container_width=True)
+
+        st.altair_chart(repayment_region_chart(repayment_region), use_container_width=True)
+
+        swap_repayment_table = repayment_swap[
+            [
+                "segment",
+                "accounts",
+                "total_net_funded",
+                "avg_ticket_size",
+                "projected_payback_multiple",
+                "profit_proxy",
+                "profit_proxy_per_account",
+                "missed_payment_day_45_rate",
+                "no_payments_first_day_60_rate",
+                "past_due_30_plus_day_120_rate",
+                "early_payoff_day_120_rate",
+                "charge_off_rate",
+            ]
+        ].rename(
+            columns={
+                "segment": "Segment",
+                "accounts": "Accounts",
+                "total_net_funded": "Net Funded",
+                "avg_ticket_size": "Avg Ticket Size",
+                "projected_payback_multiple": "Projected Payback Multiple",
+                "profit_proxy": "Profit Proxy",
+                "profit_proxy_per_account": "Profit Proxy Per Account",
+                "missed_payment_day_45_rate": "Missed Payment Day 45",
+                "no_payments_first_day_60_rate": "No Payments Day 60",
+                "past_due_30_plus_day_120_rate": "30+ Past Due Day 120",
+                "early_payoff_day_120_rate": "Early Payoff Day 120",
+                "charge_off_rate": "Charge-Off Rate",
+            }
+        )
+        st.dataframe(
+            format_table(
+                swap_repayment_table,
+                money_cols=["Net Funded", "Avg Ticket Size", "Profit Proxy", "Profit Proxy Per Account"],
+                multiple_cols=["Projected Payback Multiple"],
+                pct_cols=[
+                    "Missed Payment Day 45",
+                    "No Payments Day 60",
+                    "30+ Past Due Day 120",
+                    "Early Payoff Day 120",
+                    "Charge-Off Rate",
+                ],
+                int_cols=["Accounts"],
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        grade_repayment_table = repayment_grade[
+            [
+                "prequalification_risk_grade",
+                "accounts",
+                "total_net_funded",
+                "avg_ticket_size",
+                "projected_payback_multiple",
+                "profit_proxy_per_account",
+                "missed_payment_day_45_rate",
+                "past_due_30_plus_day_120_rate",
+                "charge_off_rate",
+            ]
+        ].rename(
+            columns={
+                "prequalification_risk_grade": "Prequal Grade",
+                "accounts": "Accounts",
+                "total_net_funded": "Net Funded",
+                "avg_ticket_size": "Avg Ticket Size",
+                "projected_payback_multiple": "Projected Payback Multiple",
+                "profit_proxy_per_account": "Profit Proxy Per Account",
+                "missed_payment_day_45_rate": "Missed Payment Day 45",
+                "past_due_30_plus_day_120_rate": "30+ Past Due Day 120",
+                "charge_off_rate": "Charge-Off Rate",
+            }
+        )
+        st.dataframe(
+            format_table(
+                grade_repayment_table,
+                money_cols=["Net Funded", "Avg Ticket Size", "Profit Proxy Per Account"],
+                multiple_cols=["Projected Payback Multiple"],
+                pct_cols=["Missed Payment Day 45", "30+ Past Due Day 120", "Charge-Off Rate"],
+                int_cols=["Accounts"],
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        region_repayment_table = repayment_region[
+            [
+                "region",
+                "accounts",
+                "total_net_funded",
+                "projected_payback_multiple",
+                "profit_proxy",
+                "profit_proxy_per_account",
+                "missed_payment_day_45_rate",
+                "past_due_30_plus_day_120_rate",
+                "charge_off_rate",
+            ]
+        ].rename(
+            columns={
+                "region": "Region",
+                "accounts": "Accounts",
+                "total_net_funded": "Net Funded",
+                "projected_payback_multiple": "Projected Payback Multiple",
+                "profit_proxy": "Profit Proxy",
+                "profit_proxy_per_account": "Profit Proxy Per Account",
+                "missed_payment_day_45_rate": "Missed Payment Day 45",
+                "past_due_30_plus_day_120_rate": "30+ Past Due Day 120",
+                "charge_off_rate": "Charge-Off Rate",
+            }
+        )
+        st.dataframe(
+            format_table(
+                region_repayment_table,
+                money_cols=["Net Funded", "Profit Proxy", "Profit Proxy Per Account"],
+                multiple_cols=["Projected Payback Multiple"],
+                pct_cols=["Missed Payment Day 45", "30+ Past Due Day 120", "Charge-Off Rate"],
+                int_cols=["Accounts"],
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        st.download_button(
+            "Download Filtered Repayment Data",
+            data=repayment_filtered.to_csv(index=False),
+            file_name="case_study_filtered_repayment_data.csv",
+            mime="text/csv",
+        )
+
+with tabs[5]:
     st.subheader("Segment Recommendation Detail")
     st.markdown(
-        "Segments are grouped by region, merchant, prequalification risk grade, and swap-in status. Because repayment and profitability fields are unavailable, the recommendation uses estimated funded volume, conversion, and risk as proxies."
+        "Segments are grouped by region, merchant, prequalification risk grade, and swap-in status. Use this view with the repayment tab to prioritize segments that combine application volume, conversion, lower risk, and acceptable account outcomes."
     )
 
     if segments.empty:
@@ -785,13 +1125,14 @@ with tabs[4]:
         use_container_width=True,
     )
 
-with tabs[5]:
-    st.subheader("Questions The Current Data Does Not Answer")
+with tabs[6]:
+    st.subheader("Remaining Caveats")
     st.markdown(
         """
         <div class="snap-warning">
-          <strong>Key caveat:</strong> this dashboard uses application and approval data only. It cannot validate
-          repayment performance or profitability because the file does not include repayment outcomes.
+          <strong>Key caveat:</strong> the repayment extract improves the decision read, but projected amount
+          paid minus net funded amount is still a proxy. It does not include fully loaded margin, cost of
+          capital, servicing expense, realized recovery timing, or a standard-policy counterfactual.
         </div>
         """,
         unsafe_allow_html=True,
@@ -800,18 +1141,18 @@ with tabs[5]:
         [
             {
                 "Instruction Area": "Repayment metrics",
-                "Status": "Not answered",
-                "Reason": "No missed payment, no-payment, past-due, early payoff, charge-off, or account status fields are present.",
+                "Status": "Answered for matched accounts",
+                "Reason": "Repayment data now includes missed payment, no-payment, past-due, early payoff, charge-off, and account status fields.",
             },
             {
                 "Instruction Area": "Profitability",
-                "Status": "Not answered",
-                "Reason": "No net funded amount, projected amount paid, revenue, loss, cost, or margin fields are present.",
+                "Status": "Partially answered",
+                "Reason": "Projected amount paid less net funded amount is a useful proxy, but not fully loaded margin.",
             },
             {
                 "Instruction Area": "True ticket size",
-                "Status": "Partially answered",
-                "Reason": "Final approval amount is used as an estimated funded amount, but actual funded amount is unavailable.",
+                "Status": "Answered for matched accounts",
+                "Reason": "Repayment records include net funded amount for completed applications with repayment coverage.",
             },
             {
                 "Instruction Area": "Approval amount increase at full application",
@@ -820,8 +1161,8 @@ with tabs[5]:
             },
             {
                 "Instruction Area": "Cohort performance maturity",
-                "Status": "Not answered",
-                "Reason": "No funded date or repayment window fields are present to season 30, 60, or 120 day performance metrics.",
+                "Status": "Partially answered",
+                "Reason": "Repayment fields include fixed day-45, day-60, day-90, day-120, and day-180 observations, but no funded date for vintage seasoning.",
             },
             {
                 "Instruction Area": "Comparison to replacement financier",
@@ -840,33 +1181,34 @@ with tabs[5]:
     st.subheader("Recommended Follow-Up Data Request")
     st.markdown(
         """
-        Request account-level repayment outcomes for completed applications, joined by application number:
+        Request the remaining account economics and policy comparison fields, joined by application number:
 
-        - Actual net funded amount and funded date
-        - Projected amount paid or realized revenue
-        - Charge-off status and charge-off amount
+        - Funded date and contractual first-payment date
+        - Realized amount paid, revenue, fees, loss amount, recoveries, and servicing cost
+        - Charge-off date and charge-off amount
         - Missed payment or first-payment-default flags at 30, 45, and 60 days
-        - Past-due status and dollars at 120 days
-        - Early payoff or same-as-cash outcome
+        - Past-due dollars at 90, 120, and 180 days
         - Standard-policy approval amount or decision counterfactual
         """
     )
 
-with tabs[6]:
+with tabs[7]:
     st.subheader("Appendix")
     st.markdown(
         f"""
         **Report:** Medical Equipment Financing Program Case Study  
         **Prepared for:** Snap Finance management case study review  
         **As of:** source extract in package; date range {metadata['date_start']} to {metadata['date_end']}  
-        **Data source:** `data/case_study_dataset.csv`  
+        **Data sources:** `data/case_study_dataset.csv`; `data/repayment_results.csv`  
         **Refresh cadence:** Ad hoc case study extract  
-        **Row grain:** One prequalification application record
+        **Row grain:** One prequalification application record; one repayment record per funded account in the repayment extract
 
         **Metric definitions:** Prequal approval rate is prequal approvals divided by applications.
         Continuation rate is full applications divided by prequal approvals. Final approval rate is final
         approvals divided by full applications. End-to-end completion is completed applications divided by
-        applications. Estimated funded amount uses final approval amount for completed applications only.
+        applications. Repayment coverage is matched repayment accounts divided by completed applications.
+        Profit proxy is projected amount paid minus net funded amount. Projected payback multiple is projected
+        amount paid divided by net funded amount.
         """
     )
 
@@ -877,6 +1219,9 @@ with tabs[6]:
 
     with st.expander("Raw Data Preview"):
         st.dataframe(filtered.head(200), hide_index=True, use_container_width=True)
+
+    with st.expander("Repayment Data Preview"):
+        st.dataframe(repayment_filtered.head(200), hide_index=True, use_container_width=True)
 
     st.download_button(
         "Download Filtered Raw Data",
